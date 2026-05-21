@@ -63,11 +63,11 @@ private:
         hw_type_ = AV_HWDEVICE_TYPE_CUDA;
         const char* decoder_name = "h264_cuvid";
 
-        codec_ = avcodec_find_decoder_by_name(decoder_name);
+        codec_ = (AVCodec*)avcodec_find_decoder_by_name(decoder_name);
         if (!codec_) {
             RCLCPP_WARN(this->get_logger(), "Hardware decoder not available, falling back to software");
             hw_type_ = AV_HWDEVICE_TYPE_NONE;
-            codec_ = avcodec_find_decoder(AV_CODEC_ID_H264);
+            codec_ = (AVCodec*)avcodec_find_decoder(AV_CODEC_ID_H264);
             if (!codec_) {
                 RCLCPP_ERROR(this->get_logger(), "No H.264 decoder available");
                 return;
@@ -81,7 +81,7 @@ private:
             if (err < 0) {
                 RCLCPP_WARN(this->get_logger(), "Failed to create hardware device context, falling back to software");
                 hw_type_ = AV_HWDEVICE_TYPE_NONE;
-                codec_ = avcodec_find_decoder(AV_CODEC_ID_H264);
+                codec_ = (AVCodec*)avcodec_find_decoder(AV_CODEC_ID_H264);
                 if (!codec_) {
                     RCLCPP_ERROR(this->get_logger(), "No H.264 decoder available");
                     return;
