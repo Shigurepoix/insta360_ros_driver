@@ -134,7 +134,7 @@ public:
         //RES_1152_1152P30 (this will give 2304 x 1152 at 30 FPS)
         //RES_1920_960P30  
         param.lrv_video_resulution = ins_camera::VideoResolution::RES_1440_720P30;
-        param.video_bitrate = 10 * 1024 * 1024;
+        param.video_bitrate = 5 * 1024 * 1024;
         param.enable_audio = false;
         param.using_lrv = false;
 
