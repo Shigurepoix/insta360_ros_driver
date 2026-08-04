@@ -2,6 +2,7 @@
 <launch>
     <arg name="equirectangular" default="false"/>
     <arg name="decoder" default="true"/>
+    <arg name="publish_rate_hz" default="30"/>
     <arg name="imu_filter" default="true"/>
     <arg name="equirectangular_config" default="$(find-pkg-share insta360_ros_driver)/config/equirectangular.yaml"/>
     <arg name="imu_config" default="$(find-pkg-share insta360_ros_driver)/config/imu_filter.yaml"/>
@@ -13,6 +14,8 @@
     <node pkg="insta360_ros_driver" exec="decoder" name="image_decoder" output="log" if="$(var decoder)">
         <param name="compressed_topic" value="/dual_fisheye/image/compressed"/>
         <param name="uncompressed_topic" value="/dual_fisheye/image"/>
+        <!-- Publish only the newest decoded frame at 10 or 30 Hz. -->
+        <param name="publish_rate_hz" value="$(var publish_rate_hz)"/>
         <!-- We can skip decoding every <skip_frame>. So skip_frame = 1 will only publish half the frames, etc. -->
         <param name="skip_frame" value="0"/>
         <!-- If you want to minimize the CPU load the most, you can decode only the i-frames. But the expected FPS is about 1-2 FPS -->

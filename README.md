@@ -1,6 +1,33 @@
 # insta360_ros_driver
 
-A ROS driver for the Insta360 cameras. This driver is tested on Ubuntu 22.04 with ROS2 Humble. The driver has also been verified on the Insta360 X2 and X3 cameras. The following resolutions are available, all at 30 FPS.
+A ROS driver for the Insta360 cameras. This driver is tested on Ubuntu 22.04 with ROS2 Humble. The driver has also been verified on the Insta360 X2 and X3 cameras.
+
+## Current Version
+
+This working version is based on upstream branch `humble` at commit `c531aef`
+(pulled August 4, 2026). The ROS package version remains `1.0.0`.
+
+| Component | Current setup |
+| --- | --- |
+| Upstream target | Ubuntu 22.04 / ROS 2 Humble |
+| Locally checked toolchain | ROS 2 Jazzy, FFmpeg/libavcodec 60, OpenCV 4.6 |
+| CameraSDK | User-supplied SDK released after April 23, 2025 |
+| CameraSDK API | `SyncLocalTimeToCamera(uint64_t utc_time, uint32_t offset_time)` |
+| Local `libCameraSDK.so` SHA-256 | `e1341d1921b6f207d506df293ab5f33039af1da6bb06843b77a13e1b13b13d01` |
+| Video input | H.264 dual-fisheye stream, normally 30 FPS |
+| Decoded output | Latest-frame-only at selectable 10 or 30 Hz |
+| Timestamp source | CameraSDK frame/gyro timestamp, mapped into ROS time |
+
+The proprietary CameraSDK headers and `libCameraSDK.so` are not tracked by this
+repository, and the supplied library does not expose a version string through
+the checked headers. The checksum above identifies the library used for this
+build; keep the original SDK package with deployment records as well.
+
+See [Current pipeline and timing](docs/current_version.md) for the data path,
+buffering policy, timestamp limitations, and configuration details.
+
+The following resolutions are available, all at 30 FPS.
+
 - 3840 x 1920
 - 2560 x 1280
 - 2304 x 1152
@@ -31,6 +58,19 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
+If Conda is active, deactivate it before building so ROS uses the system Python
+and OpenCV. In the locally checked Jazzy workspace, the equivalent explicit
+build settings are:
+
+```bash
+colcon build --symlink-install --cmake-args \
+  -DPython3_EXECUTABLE=/usr/bin/python3 \
+  -DOpenCV_DIR=/usr/lib/x86_64-linux-gnu/cmake/opencv4
+```
+
+Mixing Conda OpenCV with the OpenCV version used by `cv_bridge` can compile but
+fail at link time because the ABIs and dependent libraries differ.
+
 The Insta360 X3 (and potentially other models) needs a micro-sd card inserted to use the API. Ensure this is done.
 
 Before continuing,  **make sure the camera is set to dual-lens mode**
@@ -59,13 +99,26 @@ sudo chmod 777 /dev/insta
 ```
 
 ## Usage
-The camera provides images natively in H264 compressed image format. We have a decoder node that 
+The camera provides images as an H.264 compressed stream. The decoder node
+continuously decodes that stream, retains only the newest decoded frame, and
+publishes it at the configured output rate.
 
 ### Camera Bringup
 The camera can be brought up with the following launch file
 ```
 ros2 launch insta360_ros_driver bringup.launch.xml
 ```
+
+The default decoded output rate is 30 Hz. Select the lower-rate mode with:
+
+```bash
+ros2 launch insta360_ros_driver bringup.launch.xml publish_rate_hz:=10
+```
+
+`publish_rate_hz` accepts `10` or `30`. This controls decoded image
+publication; the H.264 stream is still decoded continuously so inter-frame
+references remain valid. At each publication tick, only the newest decoded
+frame is used. The driver does not replay a frame when no new frame arrived.
 ![bringup](docs/bringup_rqt.png)
 
 A dual fisheye image will be published.
@@ -80,12 +133,15 @@ A dual fisheye image will be published.
 - /imu/data_raw
 
 The launch file has the following optional arguments:
-- equirectangular (default="false")
 
-This publishes equirectangular images. You can configure these parameters in `config/equirectangular.yaml`.
+- `equirectangular` (default: `false`) enables equirectangular output. Configure
+  it in `config/equirectangular.yaml`.
+- `decoder` (default: `true`) enables H.264 decoding.
+- `publish_rate_hz` (default: `30`; accepted values: `10`, `30`) sets the
+  decoded-image output rate.
+- `imu_filter` (default: `true`) enables the Madgwick orientation filter.
+
 ![equirectangular](docs/equirectangular.png)
-
-- imu_filter (default="true")
 
 This uses the [imu_filter_madgwick](https://wiki.ros.org/imu_filter_madgwick) package to approximate orientation from the IMU. Note that by default, we publish `/imu/data_raw` which only contains linear acceleration and angular velocity. The madgwick filter uses this information to publish orientation to `/imu/data`. You can configure the filter in `config/imu_filter.yaml`. 
 
@@ -123,7 +179,9 @@ equirectangular_node:
 ==================================================
 ```
 
-Note that decode.py will most likely drop frames depending on your system. If you do not care about live processing, you can simply record the `/dual_fisheye/image/compressed` topic and decompress it later after recording.
+The decoder intentionally drops superseded decoded frames when the publication
+rate is lower than the camera rate. If you do not care about live processing,
+you can record `/dual_fisheye/image/compressed` and decode it after recording.
 ```
 ros2 bag record /dual_fisheye/image /imu/data_raw
 ```

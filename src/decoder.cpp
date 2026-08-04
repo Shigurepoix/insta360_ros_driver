@@ -1,10 +1,11 @@
 #include <iostream>
 #include <thread>
 #include <string>
-#include <queue>
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
+#include <chrono>
+#include <optional>
 
 #include <opencv2/opencv.hpp>
 
@@ -12,7 +13,7 @@
 #include "rclcpp/qos.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
-#include "cv_bridge/cv_bridge.h"
+#include "cv_bridge/cv_bridge.hpp"
 #include "sensor_msgs/image_encodings.hpp"
 
 extern "C" {
@@ -22,7 +23,7 @@ extern "C" {
     #include <libavutil/imgutils.h>
 }
 
-static enum AVPixelFormat get_hw_format(AVCodecContext *ctx, const enum AVPixelFormat *pix_fmts) {
+static enum AVPixelFormat get_hw_format(AVCodecContext*, const enum AVPixelFormat *pix_fmts) {
     const enum AVPixelFormat *p;
     for (p = pix_fmts; *p != AV_PIX_FMT_NONE; p++) {
         if (*p == AV_PIX_FMT_CUDA) {
@@ -34,7 +35,12 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx, const enum AVPixelF
 
 class H264DecoderNode : public rclcpp::Node {
 private:
-    AVCodec* codec_ = nullptr;
+    struct PendingFrame {
+        cv::Mat image;
+        std_msgs::msg::Header header;
+    };
+
+    const AVCodec* codec_ = nullptr;
     AVCodecContext* codec_ctx_ = nullptr;
     AVCodecParserContext* parser_ctx_ = nullptr;
     AVPacket* pkt_ = nullptr;
@@ -49,11 +55,11 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr publisher_;
 
     std::thread publisher_thread_;
-    std::queue<cv::Mat> frame_publish_queue_;
+    std::optional<PendingFrame> latest_frame_;
     std::mutex queue_mutex_;
     std::condition_variable queue_cv_;
     std::atomic<bool> stop_publisher_thread_{false};
-    size_t max_queue_size_ = 10;
+    int publish_rate_hz_ = 30;
     
     int skip_frame_ = 0;
     int frame_counter_ = 0;
@@ -106,6 +112,10 @@ private:
             codec_ctx_->get_format = get_hw_format;
         }
 
+        // Compressed message stamps are passed to FFmpeg as nanosecond PTS.
+        // The decoded AVFrame PTS therefore identifies the source ROS header.
+        codec_ctx_->pkt_timebase = AVRational{1, 1000000000};
+
         if (avcodec_open2(codec_ctx_, codec_, nullptr) < 0) {
             RCLCPP_ERROR(this->get_logger(), "Failed to open codec");
             CleanupFFmpegDecoder();
@@ -134,32 +144,42 @@ private:
     }
 
     void PublisherThreadLoop() {
+        const auto publish_period = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<double>(1.0 / publish_rate_hz_));
+        auto next_publish_time = std::chrono::steady_clock::now() + publish_period;
+
         while (!stop_publisher_thread_) {
-            cv::Mat frame_to_publish;
+            std::optional<PendingFrame> frame_to_publish;
             {
                 std::unique_lock<std::mutex> lock(queue_mutex_);
-                queue_cv_.wait(lock, [this] {
-                    return !frame_publish_queue_.empty() || stop_publisher_thread_;
+                queue_cv_.wait_until(lock, next_publish_time, [this] {
+                    return stop_publisher_thread_.load();
                 });
 
-                if (stop_publisher_thread_ && frame_publish_queue_.empty()) {
+                if (stop_publisher_thread_) {
                     break;
                 }
-                if (frame_publish_queue_.empty()) {
-                    continue;
-                }
-                frame_to_publish = frame_publish_queue_.front();
-                frame_publish_queue_.pop();
+
+                // Move out the newest decoded frame and clear the slot. Frames
+                // overwritten before this point are intentionally dropped.
+                frame_to_publish = std::move(latest_frame_);
+                latest_frame_.reset();
             }
 
-            if (!frame_to_publish.empty() && publisher_) {
+            if (frame_to_publish && !frame_to_publish->image.empty() && publisher_) {
                 auto img_msg = std::make_unique<sensor_msgs::msg::Image>();
-                std_msgs::msg::Header header;
-                header.stamp = this->get_clock()->now();
-                header.frame_id = "camera_frame";
-                cv_bridge::CvImage cv_image(header, sensor_msgs::image_encodings::BGR8, frame_to_publish);
+                cv_bridge::CvImage cv_image(
+                    frame_to_publish->header,
+                    sensor_msgs::image_encodings::BGR8,
+                    frame_to_publish->image);
                 cv_image.toImageMsg(*img_msg);
                 publisher_->publish(std::move(img_msg));
+            }
+
+            next_publish_time += publish_period;
+            const auto now = std::chrono::steady_clock::now();
+            if (next_publish_time < now) {
+                next_publish_time = now + publish_period;
             }
         }
     }
@@ -220,14 +240,22 @@ private:
                 }
                 
                 if (should_publish) {
-                    cv::Mat frame_copy = bgr_frame_.clone();
-                    {
-                        std::lock_guard<std::mutex> lock(queue_mutex_);
-                        if (frame_publish_queue_.size() < max_queue_size_) {
-                            frame_publish_queue_.push(frame_copy);
+                    const int64_t frame_pts = hw_frame_->best_effort_timestamp;
+                    if (frame_pts == AV_NOPTS_VALUE) {
+                        RCLCPP_WARN_THROTTLE(
+                            this->get_logger(), *this->get_clock(), 5000,
+                            "Decoded frame has no source timestamp; dropping it");
+                    } else {
+                        std_msgs::msg::Header header;
+                        header.stamp = rclcpp::Time(frame_pts, RCL_SYSTEM_TIME);
+                        header.frame_id = "camera_frame";
+
+                        PendingFrame pending{bgr_frame_.clone(), std::move(header)};
+                        {
+                            std::lock_guard<std::mutex> lock(queue_mutex_);
+                            latest_frame_ = std::move(pending);
                         }
                     }
-                    queue_cv_.notify_one();
                 }
             }
             
@@ -282,19 +310,26 @@ private:
 
         const uint8_t* cur_data = msg->data.data();
         size_t remaining_size = msg->data.size();
+        const int64_t message_pts = rclcpp::Time(msg->header.stamp).nanoseconds();
+        bool first_parser_input = true;
 
         while (remaining_size > 0) {
+            const int64_t parser_pts = first_parser_input ? message_pts : AV_NOPTS_VALUE;
             int bytes_parsed = av_parser_parse2(parser_ctx_, codec_ctx_,
                                                 &pkt_->data, &pkt_->size,
                                                 cur_data, static_cast<int>(remaining_size),
-                                                AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+                                                parser_pts, parser_pts, 0);
             if (bytes_parsed < 0) {
                 break; 
             }
+            first_parser_input = false;
             cur_data += bytes_parsed;
             remaining_size -= bytes_parsed;
 
             if (pkt_->size > 0) {
+                pkt_->pts = parser_ctx_->pts;
+                pkt_->dts = parser_ctx_->dts;
+
                 // Check if this is an I-frame when i_frame_only mode is enabled
                 if (i_frame_only_) {
                     // Parse NAL unit type from H.264 stream
@@ -306,6 +341,10 @@ private:
                     DecodeAndDisplayPacket(pkt_);
                 }
             }
+
+            if (bytes_parsed == 0 && pkt_->size == 0) {
+                break;
+            }
         }
     }
 
@@ -315,17 +354,27 @@ public:
         this->declare_parameter("uncompressed_topic", "/dual_fisheye/image");
         this->declare_parameter("skip_frame", 0);
         this->declare_parameter("i_frame_only", false);
+        this->declare_parameter("publish_rate_hz", 30);
 
         std::string subscribe_topic = this->get_parameter("compressed_topic").as_string();
         std::string publish_topic = this->get_parameter("uncompressed_topic").as_string();
         skip_frame_ = this->get_parameter("skip_frame").as_int();
         i_frame_only_ = this->get_parameter("i_frame_only").as_bool();
+        publish_rate_hz_ = this->get_parameter("publish_rate_hz").as_int();
+
+        if (publish_rate_hz_ != 10 && publish_rate_hz_ != 30) {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "publish_rate_hz must be 10 or 30; using 30");
+            publish_rate_hz_ = 30;
+        }
 
         subscription_ = this->create_subscription<sensor_msgs::msg::CompressedImage>(
             subscribe_topic, 10,
             std::bind(&H264DecoderNode::compressed_image_callback, this, std::placeholders::_1));
 
-        publisher_ = this->create_publisher<sensor_msgs::msg::Image>(publish_topic, 10);
+        publisher_ = this->create_publisher<sensor_msgs::msg::Image>(
+            publish_topic, rclcpp::QoS(1).reliable());
 
         publisher_thread_ = std::thread(&H264DecoderNode::PublisherThreadLoop, this);
         
@@ -335,6 +384,7 @@ public:
         RCLCPP_INFO(this->get_logger(), "Subscribing to: %s", subscribe_topic.c_str());
         RCLCPP_INFO(this->get_logger(), "Publishing to: %s", publish_topic.c_str());
         RCLCPP_INFO(this->get_logger(), "Skip frame: %d, I-frame only: %s", skip_frame_, i_frame_only_ ? "true" : "false");
+        RCLCPP_INFO(this->get_logger(), "Latest-frame publish rate: %d Hz", publish_rate_hz_);
     }
 
     ~H264DecoderNode() {

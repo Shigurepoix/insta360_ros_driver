@@ -1,0 +1,60 @@
+[0.008s] Invoking command in '/home/junmin/jackals_ws/src/insta360_ros_driver/build/insta360_ros_driver': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy CONDA_PROMPT_MODIFIER=(base) DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake /home/junmin/jackals_ws/src/insta360_ros_driver -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/home/junmin/jackals_ws/src/insta360_ros_driver/install/insta360_ros_driver
+[0.058s] -- The C compiler identification is GNU 13.3.0
+[0.107s] -- The CXX compiler identification is GNU 13.3.0
+[0.122s] -- Detecting C compiler ABI info
+[0.202s] -- Detecting C compiler ABI info - done
+[0.211s] -- Check for working C compiler: /usr/bin/cc - skipped
+[0.211s] -- Detecting C compile features
+[0.211s] -- Detecting C compile features - done
+[0.221s] -- Detecting CXX compiler ABI info
+[0.311s] -- Detecting CXX compiler ABI info - done
+[0.319s] -- Check for working CXX compiler: /usr/bin/c++ - skipped
+[0.319s] -- Detecting CXX compile features
+[0.320s] -- Detecting CXX compile features - done
+[0.323s] -- Found ament_cmake: 2.5.5 (/opt/ros/jazzy/share/ament_cmake/cmake)
+[0.425s] -- Found Python3: /home/junmin/miniconda3/bin/python3 (found version "3.13.12") found components: Interpreter 
+[0.491s] -- Override CMake install command with custom implementation using symlinks instead of copying resources
+[0.522s] -- Found rclcpp: 28.1.16 (/opt/ros/jazzy/share/rclcpp/cmake)
+[0.558s] -- Found rosidl_generator_c: 4.6.7 (/opt/ros/jazzy/share/rosidl_generator_c/cmake)
+[0.570s] -- Found rosidl_generator_cpp: 4.6.7 (/opt/ros/jazzy/share/rosidl_generator_cpp/cmake)
+[0.584s] -- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+[0.600s] -- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+[0.668s] -- Found rmw_implementation_cmake: 7.3.3 (/opt/ros/jazzy/share/rmw_implementation_cmake/cmake)
+[0.671s] -- Found rmw_fastrtps_cpp: 8.4.3 (/opt/ros/jazzy/share/rmw_fastrtps_cpp/cmake)
+[0.746s] -- Found OpenSSL: /usr/lib/x86_64-linux-gnu/libcrypto.so (found version "3.0.13")  
+[0.764s] -- Found FastRTPS: /opt/ros/jazzy/include (Required is at least version "2.13") 
+[0.786s] -- Using RMW implementation 'rmw_fastrtps_cpp' as default
+[0.856s] -- Found camera_info_manager: 5.1.7 (/opt/ros/jazzy/share/camera_info_manager/cmake)
+[0.920s] -- Setting yaml-cpp_DIR to: '/opt/ros/jazzy/share/yaml_cpp_vendor/cmake/../../../opt/yaml_cpp_vendor/share/cmake/yaml-cpp'
+[0.956s] -- Found cv_bridge: 4.1.0 (/opt/ros/jazzy/share/cv_bridge/cmake)
+[0.969s] -- Found image_transport: 5.1.7 (/opt/ros/jazzy/share/image_transport/cmake)
+[0.994s] -- Found std_srvs: 5.3.6 (/opt/ros/jazzy/share/std_srvs/cmake)
+[1.010s] -- Found imu_tools: 2.1.5 (/opt/ros/jazzy/share/imu_tools/cmake)
+[1.013s] -- Found OpenCV: /home/junmin/miniconda3 (found version "4.12.0") 
+[1.017s] -- Found PkgConfig: /usr/bin/pkg-config (found version "1.8.1") 
+[1.018s] -- Checking for module 'libavcodec'
+[1.031s] --   Found libavcodec, version 60.31.102
+[1.064s] -- Checking for module 'libavformat'
+[1.078s] --   Found libavformat, version 60.16.100
+[1.111s] -- Checking for module 'libavutil'
+[1.123s] --   Found libavutil, version 58.29.100
+[1.154s] -- Checking for one of the modules 'libswscale'
+[1.244s] Traceback (most recent call last):
+[1.246s]   File "/opt/ros/jazzy/share/ament_cmake_core/cmake/core/package_xml_2_cmake.py", line 22, in <module>
+[1.246s]     from catkin_pkg.package import parse_package_string
+[1.246s] ModuleNotFoundError: No module named 'catkin_pkg'
+[1.250s] [31mCMake Error at /opt/ros/jazzy/share/ament_cmake_core/cmake/core/ament_package_xml.cmake:95 (message):
+[1.250s]   execute_process(/home/junmin/miniconda3/bin/python3
+[1.250s]   /opt/ros/jazzy/share/ament_cmake_core/cmake/core/package_xml_2_cmake.py
+[1.251s]   /home/junmin/jackals_ws/src/insta360_ros_driver/package.xml
+[1.251s]   /home/junmin/jackals_ws/src/insta360_ros_driver/build/insta360_ros_driver/ament_cmake_core/package.cmake)
+[1.251s]   returned error code 1
+[1.251s] Call Stack (most recent call first):
+[1.251s]   /opt/ros/jazzy/share/ament_cmake_core/cmake/core/ament_package_xml.cmake:49 (_ament_package_xml)
+[1.251s]   /opt/ros/jazzy/share/ament_cmake_python/cmake/ament_python_install_package.cmake:60 (ament_package_xml)
+[1.251s]   /opt/ros/jazzy/share/ament_cmake_python/cmake/ament_python_install_package.cmake:39 (_ament_cmake_python_install_package)
+[1.251s]   CMakeLists.txt:88 (ament_python_install_package)
+[1.251s] 
+[1.251s] [0m
+[1.251s] -- Configuring incomplete, errors occurred!
+[1.261s] Invoked command in '/home/junmin/jackals_ws/src/insta360_ros_driver/build/insta360_ros_driver' returned '1': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy CONDA_PROMPT_MODIFIER=(base) DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake /home/junmin/jackals_ws/src/insta360_ros_driver -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/home/junmin/jackals_ws/src/insta360_ros_driver/install/insta360_ros_driver

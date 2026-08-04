@@ -3,6 +3,9 @@
 #include <string>
 #include <vector>
 #include <atomic>
+#include <cstdint>
+#include <limits>
+#include <mutex>
 
 #include <camera/camera.h>
 #include <camera/photography_settings.h>
@@ -13,11 +16,44 @@
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/imu.hpp"
 
+// CameraSDK timestamps are milliseconds since the camera was powered on. Map
+// that monotonic camera clock into the ROS clock domain. Taking the minimum
+// observed offset rejects variable USB/SDK buffering delay; an unavoidable
+// fixed transport delay may remain because the SDK does not expose the camera
+// boot time in the host clock domain.
+class CameraTimestampMapper {
+private:
+    static constexpr int64_t kNanosecondsPerMillisecond = 1000000LL;
+    std::mutex mutex_;
+    int64_t minimum_offset_ns_ = std::numeric_limits<int64_t>::max();
+
+public:
+    rclcpp::Time ToRosTime(int64_t camera_timestamp_ms, const rclcpp::Time& arrival_time) {
+        if (camera_timestamp_ms < 0 ||
+            camera_timestamp_ms > std::numeric_limits<int64_t>::max() / kNanosecondsPerMillisecond) {
+            return arrival_time;
+        }
+
+        const int64_t camera_time_ns = camera_timestamp_ms * kNanosecondsPerMillisecond;
+        const int64_t candidate_offset_ns = arrival_time.nanoseconds() - camera_time_ns;
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (candidate_offset_ns < minimum_offset_ns_) {
+            minimum_offset_ns_ = candidate_offset_ns;
+        }
+
+        return rclcpp::Time(
+            minimum_offset_ns_ + camera_time_ns,
+            arrival_time.get_clock_type());
+    }
+};
+
 class TestStreamDelegate : public ins_camera::StreamDelegate {
 private:
     std::shared_ptr<rclcpp::Node> node_;
     rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_pub_;
     rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
+    CameraTimestampMapper timestamp_mapper_;
 
 public:
     TestStreamDelegate(const std::shared_ptr<rclcpp::Node>& node) : node_(node) {
@@ -34,15 +70,16 @@ public:
 
     virtual ~TestStreamDelegate() {}
 
-    void OnAudioData(const uint8_t* data, size_t size, int64_t timestamp) override {}
+    void OnAudioData(const uint8_t*, size_t, int64_t) override {}
 
-    void OnVideoData(const uint8_t* data, size_t size, int64_t timestamp, uint8_t streamType, int stream_index) override {
+    void OnVideoData(const uint8_t* data, size_t size, int64_t timestamp, uint8_t, int stream_index) override {
         // We only care about the main video stream (index 0)
         if (stream_index == 0 && size > 0 && compressed_pub_) {
             auto msg = std::make_unique<sensor_msgs::msg::CompressedImage>();
 
-            // Set the header
-            msg->header.stamp = node_->get_clock()->now();
+            // Preserve the camera frame time instead of the delayed callback time.
+            const auto arrival_time = node_->get_clock()->now();
+            msg->header.stamp = timestamp_mapper_.ToRosTime(timestamp, arrival_time);
             msg->header.frame_id = "camera_frame";
 
             // Set the format to H.264
@@ -57,9 +94,15 @@ public:
     }
 
     void OnGyroData(const std::vector<ins_camera::GyroData>& data) override {
+        const auto arrival_time = node_->get_clock()->now();
+        // Gyro samples arrive in batches. Observe the newest sample first so
+        // the whole batch uses one consistent camera-to-ROS clock offset.
+        if (!data.empty()) {
+            timestamp_mapper_.ToRosTime(data.back().timestamp, arrival_time);
+        }
         for (const auto& gyro : data) {
             auto msg = std::make_unique<sensor_msgs::msg::Imu>();
-            msg->header.stamp = node_->get_clock()->now();
+            msg->header.stamp = timestamp_mapper_.ToRosTime(gyro.timestamp, arrival_time);
             msg->header.frame_id = "imu_frame";
             msg->angular_velocity.x = gyro.gx;
             msg->angular_velocity.y = gyro.gy;
@@ -84,7 +127,7 @@ public:
         }
     }
 
-    void OnExposureData(const ins_camera::ExposureData& data) override {}
+    void OnExposureData(const ins_camera::ExposureData&) override {}
 };
 
 class CameraWrapper {
@@ -127,7 +170,7 @@ public:
 
         cam->SyncLocalTimeToCamera(utc_time,offset_time);       
         ins_camera::LiveStreamParam param;
-        param.video_resolution = ins_camera::VideoResolution::RES_1920_960P30; //Change this line to edit the resolution
+        param.video_resolution = ins_camera::VideoResolution::RES_3840_1920P30; //Change this line to edit the resolution
         //Possible resolutions (results may vary per model) are:
         //RES_3840_1920P30
         //RES_2560_1280P30
