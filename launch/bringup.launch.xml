@@ -3,12 +3,16 @@
     <arg name="equirectangular" default="false"/>
     <arg name="decoder" default="true"/>
     <arg name="publish_rate_hz" default="30"/>
+    <arg name="video_resolution" default="1920x960"/>
     <arg name="imu_filter" default="true"/>
     <arg name="equirectangular_config" default="$(find-pkg-share insta360_ros_driver)/config/equirectangular.yaml"/>
     <arg name="imu_config" default="$(find-pkg-share insta360_ros_driver)/config/imu_filter.yaml"/>
 
     <!-- Publishes Compressed Images -->
-    <node pkg="insta360_ros_driver" exec="insta360_ros_driver" name="insta360_ros_driver" output="log"/>
+    <node pkg="insta360_ros_driver" exec="insta360_ros_driver" name="insta360_ros_driver" output="log">
+        <!-- X3 dual-lens preview: 1920x960 (default) or 3840x1920. -->
+        <param name="video_resolution" value="$(var video_resolution)"/>
+    </node>
 
     <!-- Decodes Compressed Images -->
     <node pkg="insta360_ros_driver" exec="decoder" name="image_decoder" output="log" if="$(var decoder)">
@@ -16,6 +20,8 @@
         <param name="uncompressed_topic" value="/dual_fisheye/image"/>
         <!-- Publish only the newest decoded frame at 10 or 30 Hz. -->
         <param name="publish_rate_hz" value="$(var publish_rate_hz)"/>
+        <!-- Scale the combined camera stream to the requested output size. -->
+        <param name="output_resolution" value="$(var video_resolution)"/>
         <!-- We can skip decoding every <skip_frame>. So skip_frame = 1 will only publish half the frames, etc. -->
         <param name="skip_frame" value="0"/>
         <!-- If you want to minimize the CPU load the most, you can decode only the i-frames. But the expected FPS is about 1-2 FPS -->

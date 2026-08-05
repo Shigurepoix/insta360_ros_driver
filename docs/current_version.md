@@ -60,6 +60,37 @@ input subscription retains its existing depth because it carries the stateful
 H.264 stream. The equirectangular C++ subscriber and publisher already use depth
 one and preserve the incoming image header.
 
+### X3 dual-lens resolution selection
+
+CameraSDK treats preview resolution and active-sensor selection as independent
+settings. The camera can retain `SENSOR_DEVICE_FRONT` or `SENSOR_DEVICE_REAR`
+from an earlier mode. Before every preview, the driver calls
+`SetActiveSensor(SENSOR_DEVICE_ALL)` and fails startup if panoramic mode cannot
+be selected.
+
+On the tested X3 firmware, requesting `RES_1920_960P30` after selecting both
+sensors yields two separate 2880×2880 H.264 streams, one for each lens. The SDK
+reports them through `stream_index` 0 and 1; the original driver only consumes
+index 0, which explains the apparent single-lens result. The X3's
+`RES_3840_1920P30` path instead supplies the combined dual-fisheye canvas the
+driver expects.
+
+The `video_resolution` launch argument accepts:
+
+- `1920x960` (default): capture the combined 3840×1920 stream and downscale it
+  directly during FFmpeg pixel conversion.
+- `3840x1920`: publish the combined stream at its native dimensions.
+
+Both modes use the main stream (`using_lrv=false`) and contain both fisheye
+lenses. The 1920×960 option reduces ROS bandwidth, copies, and downstream model
+input size, but it does not reduce USB transport or H.264 decode work because
+the camera source remains 3840×1920. Unsupported strings fail explicitly rather
+than silently selecting an unexpected SDK mode.
+
+The camera node also waits up to three seconds for a compressed-image
+subscriber before starting the stream. This prevents the decoder from missing
+the H.264 sequence/picture parameter sets sent at startup.
+
 ## Output-rate configuration
 
 The launch argument and decoder parameter are both named `publish_rate_hz`.

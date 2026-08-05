@@ -15,6 +15,7 @@ This working version is based on upstream branch `humble` at commit `c531aef`
 | CameraSDK API | `SyncLocalTimeToCamera(uint64_t utc_time, uint32_t offset_time)` |
 | Local `libCameraSDK.so` SHA-256 | `e1341d1921b6f207d506df293ab5f33039af1da6bb06843b77a13e1b13b13d01` |
 | Video input | H.264 dual-fisheye stream, normally 30 FPS |
+| X3 preview modes | Dual-lens 1920×960 (default), or dual-lens 3840×1920 |
 | Decoded output | Latest-frame-only at selectable 10 or 30 Hz |
 | Timestamp source | CameraSDK frame/gyro timestamp, mapped into ROS time |
 
@@ -139,6 +140,13 @@ The launch file has the following optional arguments:
 - `decoder` (default: `true`) enables H.264 decoding.
 - `publish_rate_hz` (default: `30`; accepted values: `10`, `30`) sets the
   decoded-image output rate.
+- `video_resolution` (default: `1920x960`; accepted values: `1920x960`,
+  `3840x1920`) selects the decoded image size. The tested X3 firmware returns
+  separate square per-lens streams when the SDK is asked for `1920x960`, so the
+  driver always captures the known-good combined `3840x1920` stream and scales
+  it in the decoder for `1920x960` output. This reduces ROS and inference image
+  size, but does not reduce camera transport or H.264 decoding cost. The driver
+  also explicitly selects both sensors before starting the stream.
 - `imu_filter` (default: `true`) enables the Madgwick orientation filter.
 
 ![equirectangular](docs/equirectangular.png)

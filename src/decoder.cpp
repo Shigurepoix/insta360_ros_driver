@@ -60,6 +60,8 @@ private:
     std::condition_variable queue_cv_;
     std::atomic<bool> stop_publisher_thread_{false};
     int publish_rate_hz_ = 30;
+    int output_width_ = 1920;
+    int output_height_ = 960;
     
     int skip_frame_ = 0;
     int frame_counter_ = 0;
@@ -211,15 +213,15 @@ private:
             if (!sws_ctx_ && frame_to_display->width > 0 && frame_to_display->height > 0) {
                 sws_ctx_ = sws_getContext(
                     frame_to_display->width, frame_to_display->height, (AVPixelFormat)frame_to_display->format,
-                    frame_to_display->width, frame_to_display->height, AV_PIX_FMT_BGR24,
-                    SWS_POINT, nullptr, nullptr, nullptr);
+                    output_width_, output_height_, AV_PIX_FMT_BGR24,
+                    SWS_BILINEAR, nullptr, nullptr, nullptr);
                 
                 if (!sws_ctx_) {
                     av_frame_unref(hw_frame_);
                     if (frame_to_display == sw_frame_) av_frame_unref(sw_frame_);
                     return; 
                 }
-                bgr_frame_.create(frame_to_display->height, frame_to_display->width, CV_8UC3);
+                bgr_frame_.create(output_height_, output_width_, CV_8UC3);
             }
 
             if (sws_ctx_ && !bgr_frame_.empty()) {
@@ -355,12 +357,29 @@ public:
         this->declare_parameter("skip_frame", 0);
         this->declare_parameter("i_frame_only", false);
         this->declare_parameter("publish_rate_hz", 30);
+        this->declare_parameter("output_resolution", "1920x960");
 
         std::string subscribe_topic = this->get_parameter("compressed_topic").as_string();
         std::string publish_topic = this->get_parameter("uncompressed_topic").as_string();
         skip_frame_ = this->get_parameter("skip_frame").as_int();
         i_frame_only_ = this->get_parameter("i_frame_only").as_bool();
         publish_rate_hz_ = this->get_parameter("publish_rate_hz").as_int();
+        const auto output_resolution = this->get_parameter("output_resolution").as_string();
+
+        if (output_resolution == "1920x960") {
+            output_width_ = 1920;
+            output_height_ = 960;
+        } else if (output_resolution == "3840x1920") {
+            output_width_ = 3840;
+            output_height_ = 1920;
+        } else {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "Unsupported output_resolution '%s'; using 1920x960",
+                output_resolution.c_str());
+            output_width_ = 1920;
+            output_height_ = 960;
+        }
 
         if (publish_rate_hz_ != 10 && publish_rate_hz_ != 30) {
             RCLCPP_WARN(
@@ -385,6 +404,7 @@ public:
         RCLCPP_INFO(this->get_logger(), "Publishing to: %s", publish_topic.c_str());
         RCLCPP_INFO(this->get_logger(), "Skip frame: %d, I-frame only: %s", skip_frame_, i_frame_only_ ? "true" : "false");
         RCLCPP_INFO(this->get_logger(), "Latest-frame publish rate: %d Hz", publish_rate_hz_);
+        RCLCPP_INFO(this->get_logger(), "Decoded output resolution: %dx%d", output_width_, output_height_);
     }
 
     ~H264DecoderNode() {

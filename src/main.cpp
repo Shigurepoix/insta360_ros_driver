@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <limits>
 #include <mutex>
@@ -66,6 +67,17 @@ public:
         // Publisher for IMU data (remains the same)
         imu_pub_ = node_->create_publisher<sensor_msgs::msg::Imu>("imu/data_raw", rclcpp::SensorDataQoS());
         RCLCPP_INFO(node_->get_logger(), "Publisher for compressed images and IMU created.");
+    }
+
+    bool WaitForCompressedSubscriber(std::chrono::milliseconds timeout) {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (rclcpp::ok() && std::chrono::steady_clock::now() < deadline) {
+            if (compressed_pub_->get_subscription_count() > 0) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        return compressed_pub_->get_subscription_count() > 0;
     }
 
     virtual ~TestStreamDelegate() {}
@@ -160,8 +172,28 @@ public:
         RCLCPP_INFO(node_->get_logger(), "Camera opened successfully.");
         discovery.FreeDeviceDescriptors(list);
 
-        std::shared_ptr<ins_camera::StreamDelegate> delegate = std::make_shared<TestStreamDelegate>(node_);
+        // Resolution and sensor selection are independent in CameraSDK. The
+        // camera can retain FRONT or REAR from an earlier single-lens session,
+        // in which case even a 2:1 preview request contains only that lens.
+        // Explicitly restore the panoramic, dual-sensor mode before preview.
+        if (!cam->SetActiveSensor(ins_camera::SensorDevice::SENSOR_DEVICE_ALL)) {
+            RCLCPP_ERROR(node_->get_logger(), "Failed to select both camera sensors.");
+            return -1;
+        }
+        RCLCPP_INFO(node_->get_logger(), "Selected both sensors for panoramic preview.");
+
+        auto test_delegate = std::make_shared<TestStreamDelegate>(node_);
+        std::shared_ptr<ins_camera::StreamDelegate> delegate = test_delegate;
         cam->SetStreamDelegate(delegate);
+
+        // The preview sends its H.264 SPS/PPS at stream startup. If the decoder
+        // has not matched yet, it misses those parameter sets and cannot decode
+        // subsequent frames. Wait for discovery before streaming.
+        if (!test_delegate->WaitForCompressedSubscriber(std::chrono::seconds(3))) {
+            RCLCPP_WARN(
+                node_->get_logger(),
+                "No compressed-image subscriber discovered before stream startup");
+        }
 
         auto start = time(NULL);
 
@@ -170,13 +202,24 @@ public:
 
         cam->SyncLocalTimeToCamera(utc_time,offset_time);       
         ins_camera::LiveStreamParam param;
-        param.video_resolution = ins_camera::VideoResolution::RES_3840_1920P30; //Change this line to edit the resolution
-        //Possible resolutions (results may vary per model) are:
-        //RES_3840_1920P30
-        //RES_2560_1280P30
-        //RES_1152_1152P30 (this will give 2304 x 1152 at 30 FPS)
-        //RES_1920_960P30  
-        param.lrv_video_resulution = ins_camera::VideoResolution::RES_1440_720P30;
+        const auto resolution = node_->get_parameter("video_resolution").as_string();
+        if (resolution == "1920x960") {
+            // On the tested X3 firmware, RES_1920_960P30 produces two
+            // independent 2880x2880 encoded streams (one per lens), rather
+            // than one combined 2:1 stream. Capture the known-good combined
+            // stream and let the decoder scale it to the requested size.
+            param.video_resolution = ins_camera::VideoResolution::RES_3840_1920P30;
+        } else if (resolution == "3840x1920") {
+            param.video_resolution = ins_camera::VideoResolution::RES_3840_1920P30;
+        } else {
+            RCLCPP_ERROR(
+                node_->get_logger(),
+                "Unsupported video_resolution '%s'; use 1920x960 or 3840x1920",
+                resolution.c_str());
+            return -1;
+        }
+        // This field must be initialized even though the main stream is used.
+        param.lrv_video_resulution = ins_camera::VideoResolution::RES_1920_960P30;
         param.video_bitrate = 1024 * 1024 / 2;
         param.enable_audio = false;
         param.using_lrv = false;
@@ -186,7 +229,10 @@ public:
             return -1;
         }
         
-        RCLCPP_INFO(node_->get_logger(), "Live streaming started.");
+        RCLCPP_INFO(
+            node_->get_logger(),
+            "Live streaming started in dual-sensor panoramic mode at 3840x1920; "
+            "decoded output requested at %s.", resolution.c_str());
         return 0;
     }
 };
@@ -194,6 +240,7 @@ public:
 int main(int argc, char* argv[]) {
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared("insta_publisher");
+    node->declare_parameter("video_resolution", "1920x960");
     
     CameraWrapper camera(node);
     if (camera.run_camera() != 0) {
